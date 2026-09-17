@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cursor-usage-tracker"
+version = "0.1.0"
+description = "Privacy-preserving local workload and token estimator for Cursor"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Cursor Usage Tracker contributors" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.15,<2",
+    "pytest>=8.3,<9",
+    "ruff>=0.11,<1",
+]
+
+[project.scripts]
+cursor-usage = "cursor_usage_tracker.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cursor_usage_tracker"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

@@ -7,6 +7,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from cursor_usage_tracker.conversation_context_storage import (
+    ConversationContextRepository,
+)
 from cursor_usage_tracker.domain import TokenEstimate, ToolOutputEstimate
 from cursor_usage_tracker.estimation import (
     estimate_file,
@@ -95,9 +98,11 @@ def _record_prompt(hook: dict[str, object], storage: Storage) -> None:
         attachment_characters += estimate.characters
         attachment_tokens += estimate.tokens
 
-    storage.record_turn(
-        generation_id=_required_string(hook, "generation_id"),
-        conversation_id=_required_string(hook, "conversation_id"),
+    generation_id = _required_string(hook, "generation_id")
+    conversation_id = _required_string(hook, "conversation_id")
+    inserted = storage.record_turn(
+        generation_id=generation_id,
+        conversation_id=conversation_id,
         created_at=created_at,
         project_label=project_label,
         project_hash=project_hash,
@@ -110,11 +115,14 @@ def _record_prompt(hook: dict[str, object], storage: Storage) -> None:
         attachment_characters=attachment_characters,
         attachment_tokens=attachment_tokens,
     )
-    storage.initialize_turn_runtime(
-        _required_string(hook, "generation_id"),
-        prompt_estimate.tokens + attachment_tokens,
-        prompt_estimate.source,
-    )
+    if inserted:
+        ConversationContextRepository(storage).initialize_turn(
+            generation_id,
+            conversation_id,
+            prompt_estimate.tokens + attachment_tokens,
+            prompt_estimate.source,
+            created_at,
+        )
 
 
 def _record_content_metric(hook: dict[str, object], storage: Storage) -> None:
@@ -147,10 +155,11 @@ def _record_content_metric(hook: dict[str, object], storage: Storage) -> None:
             "preCompact": "compaction",
         }[event_name]
     generation_id = _required_string(hook, "generation_id")
+    conversation_id = _required_string(hook, "conversation_id")
     inserted = storage.record_event(
         event_id=_event_id(hook, content),
         generation_id=generation_id,
-        conversation_id=_required_string(hook, "conversation_id"),
+        conversation_id=conversation_id,
         created_at=created_at,
         category=category,
         name=name,
@@ -161,18 +170,35 @@ def _record_content_metric(hook: dict[str, object], storage: Storage) -> None:
     )
     if inserted == 0:
         return
+    context_repository = ConversationContextRepository(storage)
     if event_name == "postToolUse":
-        storage.record_tool_loop(generation_id, estimate.tokens)
-    elif event_name == "preCompact":
-        storage.record_compaction(generation_id)
-    elif event_name == "afterAgentThought":
-        storage.record_thinking(
+        context_repository.record_tool_loop(
             generation_id,
+            conversation_id,
+            estimate.tokens,
+            created_at,
+        )
+    elif event_name == "preCompact":
+        context_repository.record_compaction(
+            generation_id,
+            conversation_id,
+            created_at,
+        )
+    elif event_name == "afterAgentThought":
+        context_repository.record_thinking(
+            generation_id,
+            conversation_id,
             estimate.tokens,
             _optional_int(hook, "duration_ms") or 0,
+            created_at,
         )
         storage.record_output_estimator(generation_id, estimate.source)
     elif event_name == "afterAgentResponse":
+        context_repository.record_response(
+            conversation_id,
+            estimate.tokens,
+            created_at,
+        )
         storage.record_output_estimator(generation_id, estimate.source)
 
 

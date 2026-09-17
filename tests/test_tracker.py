@@ -348,6 +348,38 @@ def test_visible_thinking_is_aggregated_without_content(tmp_path: Path) -> None:
     assert "private visible reasoning" not in _database_text(storage.path)
 
 
+def test_new_turn_inherits_observable_conversation_context(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "usage.db")
+    process_hook(_prompt_payload(tmp_path, prompt="abcd"), storage)
+    process_hook(
+        {
+            **_common_payload(),
+            "hook_event_name": "afterAgentResponse",
+            "text": "abcd",
+        },
+        storage,
+    )
+    process_hook(
+        _prompt_payload(
+            tmp_path,
+            generation_id="generation-2",
+            prompt="abcd",
+        ),
+        storage,
+    )
+
+    runtime = storage.query(
+        """
+        SELECT * FROM turn_runtime_metrics
+        WHERE generation_id = 'generation-2'
+        """
+    )[0]
+    context = storage.query("SELECT * FROM conversation_context_metrics")[0]
+    assert runtime["base_input_tokens"] == 6
+    assert runtime["estimated_input_tokens"] == 6
+    assert context["cumulative_context_tokens"] == 6
+
+
 def test_loop_estimator_accumulates_and_resets_after_compaction(
     tmp_path: Path,
 ) -> None:
@@ -385,9 +417,12 @@ def test_loop_estimator_accumulates_and_resets_after_compaction(
 
     metrics = storage.query("SELECT * FROM turn_runtime_metrics")[0]
     assert metrics["estimated_model_calls"] == 3
-    assert metrics["estimated_input_tokens"] == 10
+    assert metrics["estimated_input_tokens"] == 8
     assert metrics["cumulative_context_tokens"] == 2
     assert metrics["compaction_count"] == 1
+    context = storage.query("SELECT * FROM conversation_context_metrics")[0]
+    assert context["cumulative_context_tokens"] == 2
+    assert context["compaction_count"] == 1
 
 
 def test_telemetry_import_builds_profiles_and_accuracy_report(

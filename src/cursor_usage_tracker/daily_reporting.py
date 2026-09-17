@@ -8,6 +8,7 @@ from datetime import UTC, datetime, time, timedelta
 from cursor_usage_tracker.domain import ReportWindow
 from cursor_usage_tracker.reporting import (
     calculate_cost,
+    calculate_loop_reference_cost,
     calculate_observable_cost,
     estimate_model_usage,
     latest_rates,
@@ -50,7 +51,7 @@ def build_daily_report(storage: Storage, window: ReportWindow) -> dict[str, obje
         },
         "rows": rows,
         "limitations": [
-            "Input and output columns contain observable text estimates only.",
+            "Input estimates carry observable context across conversation turns.",
             "A bounded total range requires calibration.",
             "Configured models and prices are reference-only assumptions.",
             "Cache read and cache write usage are not observable locally.",
@@ -95,9 +96,9 @@ def render_daily_table(report: Mapping[str, object]) -> str:
             divider,
             _format_row(display_rows[-1], widths, numeric_columns),
             divider,
-            "* Input is loop-aware; Output/Think cover visible text only.",
+            "* Input carries observable context across turns and tool loops.",
             "  A bounded total range requires calibration.",
-            "  Ref Cost uses calibration when available, otherwise observable text.",
+            "  Ref Cost uses calibration when available, otherwise loop estimates.",
             "  Configured models and prices are reference-only assumptions.",
             "  Cache create/read are not observable locally.",
         ]
@@ -121,7 +122,7 @@ def _build_day_rows(
         WITH event_totals AS (
             SELECT generation_id,
                    SUM(CASE
-                       WHEN category IN ('tool', 'tool_text', 'compaction')
+                       WHEN category IN ('tool', 'tool_text')
                         AND lower(name) NOT LIKE '%screenshot%'
                             THEN estimated_tokens ELSE 0 END) AS context_tokens,
                    SUM(CASE WHEN category = 'assistant'
@@ -248,6 +249,9 @@ def _build_day_rows(
         observable_reference_cost = (
             calculate_observable_cost(usage, rate) if rate is not None else None
         )
+        loop_reference_cost = (
+            calculate_loop_reference_cost(usage, rate) if rate is not None else None
+        )
         rows.append(
             {
                 "date": starts_at.date().isoformat(),
@@ -255,6 +259,7 @@ def _build_day_rows(
                 **usage,
                 "cost_usd": cost,
                 "observable_reference_cost_usd": observable_reference_cost,
+                "loop_reference_cost_usd": loop_reference_cost,
             }
         )
     return rows
@@ -263,7 +268,7 @@ def _build_day_rows(
 def _display_row(row: Mapping[str, object]) -> tuple[str, ...]:
     estimated_tokens = row.get("estimated_tokens")
     cost = row.get("cost_usd")
-    reference_cost = row.get("observable_reference_cost_usd")
+    reference_cost = row.get("loop_reference_cost_usd")
     return (
         str(row.get("date", "")),
         _shorten(str(row.get("repository", "")), 24),
@@ -295,7 +300,7 @@ def _total_row(rows: list[object]) -> tuple[str, ...]:
     mappings = [row for row in rows if isinstance(row, dict)]
     has_unknown_total = any(row.get("estimated_tokens") is None for row in mappings)
     has_unknown_cost = any(
-        row.get("cost_usd") is None and row.get("observable_reference_cost_usd") is None
+        row.get("cost_usd") is None and row.get("loop_reference_cost_usd") is None
         for row in mappings
     )
     return (
@@ -346,7 +351,7 @@ def _cost_point(row: Mapping[str, object]) -> float:
     cost = row.get("cost_usd")
     if isinstance(cost, dict):
         return _number(cost.get("point"))
-    return _number(row.get("observable_reference_cost_usd"))
+    return _number(row.get("loop_reference_cost_usd"))
 
 
 def _integer(value: object) -> int:

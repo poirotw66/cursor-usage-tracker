@@ -1,6 +1,6 @@
 """Versioned SQLite schema owned by the persistence boundary."""
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
@@ -118,6 +118,12 @@ CREATE TABLE IF NOT EXISTS turn_runtime_metrics (
     thinking_blocks INTEGER NOT NULL,
     visible_thinking_tokens INTEGER NOT NULL,
     thinking_duration_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS conversation_context_metrics (
+    conversation_id TEXT PRIMARY KEY,
+    cumulative_context_tokens INTEGER NOT NULL,
+    compaction_count INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS estimation_metadata (
     generation_id TEXT PRIMARY KEY,

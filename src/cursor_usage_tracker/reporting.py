@@ -19,7 +19,7 @@ def build_report(storage: Storage, window: ReportWindow) -> dict[str, object]:
         WITH event_totals AS (
             SELECT generation_id,
                    SUM(CASE
-                       WHEN category IN ('tool', 'tool_text', 'compaction')
+                       WHEN category IN ('tool', 'tool_text')
                         AND lower(name) NOT LIKE '%screenshot%'
                             THEN estimated_tokens ELSE 0 END) AS context_tokens,
                    SUM(CASE WHEN category = 'assistant'
@@ -144,6 +144,7 @@ def build_report(storage: Storage, window: ReportWindow) -> dict[str, object]:
     costed_requests = 0
     observable_reference_cost = 0.0
     observable_costed_requests = 0
+    loop_reference_cost = 0.0
     for row in model_rows:
         row_data = dict(row)
         model = str(row_data["model"])
@@ -172,11 +173,15 @@ def build_report(storage: Storage, window: ReportWindow) -> dict[str, object]:
             model_report["cost_usd"] = None
         if rate is not None:
             reference_cost = calculate_observable_cost(model_report, rate)
+            loop_cost = calculate_loop_reference_cost(model_report, rate)
             model_report["observable_reference_cost_usd"] = reference_cost
+            model_report["loop_reference_cost_usd"] = loop_cost
             observable_reference_cost += reference_cost
+            loop_reference_cost += loop_cost
             observable_costed_requests += requests
         else:
             model_report["observable_reference_cost_usd"] = None
+            model_report["loop_reference_cost_usd"] = None
         models.append(model_report)
 
     repository_rows = storage.query(
@@ -209,6 +214,9 @@ def build_report(storage: Storage, window: ReportWindow) -> dict[str, object]:
         "uncosted_requests": total_requests - costed_requests,
         "observable_reference_cost_usd": (
             observable_reference_cost if observable_costed_requests else None
+        ),
+        "loop_reference_cost_usd": (
+            loop_reference_cost if observable_costed_requests else None
         ),
         "observable_costed_requests": observable_costed_requests,
         "dashboard_snapshot": dict(snapshots[0]) if snapshots else None,
@@ -282,10 +290,10 @@ def render_text(report: Mapping[str, object]) -> str:
         )
     else:
         lines.append("Estimated cost: unknown (missing calibration or rate)")
-    reference_cost = report.get("observable_reference_cost_usd")
-    if isinstance(reference_cost, (int, float)):
+    loop_reference_cost = report.get("loop_reference_cost_usd")
+    if isinstance(loop_reference_cost, (int, float)):
         lines.append(
-            f"Observable reference cost: ~${reference_cost:.4f} (reference only)"
+            f"Loop-aware reference cost: ~${loop_reference_cost:.4f} (reference only)"
         )
     uncosted = _as_int(report.get("uncosted_requests", 0))
     if uncosted:
@@ -481,6 +489,21 @@ def calculate_observable_cost(
     """Price observable text as an uncached reference, not a billing total."""
     return (
         _as_float(model_report["visible_input_tokens"])
+        * _as_float(rate["input_per_million"])
+        + (
+            _as_float(model_report["visible_output_tokens"])
+            + _as_float(model_report["visible_thinking_tokens"])
+        )
+        * _as_float(rate["output_per_million"])
+    ) / 1_000_000
+
+
+def calculate_loop_reference_cost(
+    model_report: Mapping[str, object], rate: Mapping[str, object]
+) -> float:
+    """Price repeated observable context as an uncached reference estimate."""
+    return (
+        _as_float(model_report["loop_estimated_input_tokens"])
         * _as_float(rate["input_per_million"])
         + (
             _as_float(model_report["visible_output_tokens"])

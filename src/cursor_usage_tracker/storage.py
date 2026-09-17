@@ -115,9 +115,9 @@ class Storage:
         attachment_count: int,
         attachment_characters: int,
         attachment_tokens: int,
-    ) -> None:
+    ) -> int:
         """Insert a request once, keyed by Cursor generation ID."""
-        self.execute(
+        return self.execute(
             """
             INSERT INTO turns (
                 generation_id, conversation_id, created_at, project_label,
@@ -209,30 +209,6 @@ class Storage:
             ),
         )
 
-    def initialize_turn_runtime(
-        self,
-        generation_id: str,
-        base_input_tokens: int,
-        input_estimator: str,
-    ) -> None:
-        """Initialize loop-aware metrics for a request."""
-        self.execute(
-            """
-            INSERT INTO turn_runtime_metrics VALUES (?, ?, 0, ?, 1, 0, 0, 0, 0)
-            ON CONFLICT(generation_id) DO NOTHING
-            """,
-            (generation_id, base_input_tokens, base_input_tokens),
-        )
-        self.execute(
-            """
-            INSERT INTO estimation_metadata (
-                generation_id, input_estimator, output_estimator
-            ) VALUES (?, ?, NULL)
-            ON CONFLICT(generation_id) DO NOTHING
-            """,
-            (generation_id, input_estimator),
-        )
-
     def record_output_estimator(self, generation_id: str, estimator: str) -> None:
         """Record the heuristic used for visible model output."""
         self.execute(
@@ -241,47 +217,6 @@ class Storage:
             WHERE generation_id = ?
             """,
             (estimator, generation_id),
-        )
-
-    def record_tool_loop(self, generation_id: str, context_tokens: int) -> None:
-        """Account for the next model call after one tool result."""
-        self.execute(
-            """
-            UPDATE turn_runtime_metrics
-            SET estimated_input_tokens = estimated_input_tokens
-                    + base_input_tokens + cumulative_context_tokens + ?,
-                cumulative_context_tokens = cumulative_context_tokens + ?,
-                estimated_model_calls = estimated_model_calls + 1
-            WHERE generation_id = ?
-            """,
-            (context_tokens, context_tokens, generation_id),
-        )
-
-    def record_compaction(self, generation_id: str) -> None:
-        """Reset observable accumulated context after compaction."""
-        self.execute(
-            """
-            UPDATE turn_runtime_metrics
-            SET cumulative_context_tokens = 0,
-                compaction_count = compaction_count + 1
-            WHERE generation_id = ?
-            """,
-            (generation_id,),
-        )
-
-    def record_thinking(
-        self, generation_id: str, tokens: int, duration_ms: int
-    ) -> None:
-        """Store visible reasoning aggregates without thought content."""
-        self.execute(
-            """
-            UPDATE turn_runtime_metrics
-            SET thinking_blocks = thinking_blocks + 1,
-                visible_thinking_tokens = visible_thinking_tokens + ?,
-                thinking_duration_ms = thinking_duration_ms + ?
-            WHERE generation_id = ?
-            """,
-            (tokens, duration_ms, generation_id),
         )
 
     def record_subagent_start(

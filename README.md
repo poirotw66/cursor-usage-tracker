@@ -47,11 +47,13 @@ thinking/model parameters、可見文字長度、附件數、工具輸出長度�
 模型與執行狀態。原始 prompt、assistant response、tool payload、附件內容、
 email 與完整檔案路徑不會寫入 tracker database。
 
-Loop-aware estimator 會以初始 prompt/附件作為第一個 model call，並在每次
-tool result 後累積下一次 model call 的 observable context；`preCompact`
-會重設累積 context。`afterAgentThought` 只保存 visible thinking token
-estimate、duration 與 block count，不保存 thought 原文，也無法觀察 hidden
-reasoning。
+Conversation-aware estimator 會把同一 conversation 先前可見的 prompt、附件、
+tool result、assistant response 與 visible thinking token 數帶入下一個 turn，
+並在每次 tool result 後估算下一次 model call 的累積 input。升級後第一次遇到
+既有 conversation 時，會從 metadata 重建可觀察 context；`preCompact` 會重設
+ledger，因為 compact 後的 server summary 不可見。整個 ledger 只保存 token
+聚合值，不保存原文。`afterAgentThought` 只保存 visible thinking token
+estimate、duration 與 block count，也無法觀察 hidden reasoning。
 
 `sync` 會以唯讀方式讀取 Cursor 的 `state.vscdb`，以 bubble 的 `requestId`
 對應 hook `generation_id`。若 `modelInfo.modelName` 有明確模型，會補上
@@ -121,14 +123,16 @@ Requests、Observable Input/Output、Excluded Non-text、Estimated Total 與 Cos
 - `Requests`：使用者送出的 prompt 次數。
 - `Calls`：估算的 model-call 次數；初始 request 為一次，每個 tool result
   會觸發下一次估算 call。
-- `Input Est.*`：考慮 tool loop 與累積 context 的 input point estimate。
+- `Input Est.*`：考慮同一 conversation 的跨 turn context 與 tool loop
+  重複輸入後的 point estimate。
 - `Output*`：hook 可觀察到的 assistant response 文字估算。
 - `Think*`：`afterAgentThought` 可觀察到的 thinking 文字估算，不包含 hidden
   reasoning。
 - `Excluded`：Screenshot 等未使用文字 heuristic 的非文字 tool events。
 - `Total Est.`：input、output 與可見 thinking 的估算；沒有 calibration 時
   屬於 low confidence。
-- `Ref Cost`：使用參考費率計算，不是 Cursor 帳單。
+- `Ref Cost`：以 conversation-aware input estimate 與參考費率計算，不是
+  Cursor 帳單；無法反映實際 cache 折扣。
 
 `*` 欄位都不是官方 token telemetry。若要提供給其他程式使用：
 
